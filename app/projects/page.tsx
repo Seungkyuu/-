@@ -4,14 +4,6 @@ import { useState, useEffect, useCallback } from 'react';
 import ProjectTable from '@/components/ProjectTable';
 import { WORK_TYPES } from '@/lib/constants';
 
-interface ProjectsResponse {
-  data: ProjectRow[];
-  total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-}
-
 interface ProjectRow {
   id: string;
   title: string;
@@ -30,6 +22,16 @@ interface ProjectRow {
   lead_time: number | null;
   memo: string | null;
   memo_status: string | null;
+  data_year: number | null;
+}
+
+interface ProjectsResponse {
+  data: ProjectRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  availableYears: string[];
 }
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -38,6 +40,7 @@ export default function ProjectsPage() {
   const [workType, setWorkType] = useState('');
   const [agency, setAgency] = useState('');
   const [month, setMonth] = useState('');
+  const [year, setYear] = useState('2025');
   const [minPrice, setMinPrice] = useState('');
   const [maxPrice, setMaxPrice] = useState('');
   const [sortBy, setSortBy] = useState('announced_at');
@@ -47,13 +50,14 @@ export default function ProjectsPage() {
   const [data, setData] = useState<ProjectRow[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
+  const [availableYears, setAvailableYears] = useState<string[]>(['2023', '2024', '2025']);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        workType, agency, month, minPrice, maxPrice,
+        workType, agency, month, year, minPrice, maxPrice,
         sortBy, sortOrder, page: String(page), pageSize: '20',
       });
       const res = await fetch(`/api/projects?${params}`);
@@ -61,61 +65,62 @@ export default function ProjectsPage() {
       setData(json.data || []);
       setTotal(json.total || 0);
       setTotalPages(json.totalPages || 1);
+      if (json.availableYears?.length) setAvailableYears(json.availableYears);
     } catch {
       setData([]);
     } finally {
       setLoading(false);
     }
-  }, [workType, agency, month, minPrice, maxPrice, sortBy, sortOrder, page]);
+  }, [workType, agency, month, year, minPrice, maxPrice, sortBy, sortOrder, page]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleSort = (col: string) => {
-    if (sortBy === col) {
-      setSortOrder((o) => (o === 'DESC' ? 'ASC' : 'DESC'));
-    } else {
-      setSortBy(col);
-      setSortOrder('DESC');
-    }
+    if (sortBy === col) setSortOrder((o) => (o === 'DESC' ? 'ASC' : 'DESC'));
+    else { setSortBy(col); setSortOrder('DESC'); }
     setPage(1);
-  };
-
-  const handleFilter = () => {
-    setPage(1);
-    fetchData();
   };
 
   const handleReset = () => {
-    setWorkType('');
-    setAgency('');
-    setMonth('');
-    setMinPrice('');
-    setMaxPrice('');
-    setPage(1);
+    setWorkType(''); setAgency(''); setMonth(''); setYear('2025');
+    setMinPrice(''); setMaxPrice(''); setPage(1);
   };
 
-  const exportUrl = `/api/projects/export?workType=${workType}&agency=${agency}&month=${month}`;
+  const exportUrl = `/api/projects/export?workType=${workType}&agency=${agency}&month=${month}&year=${year}`;
 
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">사업 목록</h1>
-          <p className="text-sm text-gray-500 mt-0.5">2025년 입찰공고 전체 · 총 {total.toLocaleString()}건</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {year}년 입찰공고 · 총 {total.toLocaleString()}건
+          </p>
         </div>
-        <a
-          href={exportUrl}
-          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors"
-        >
+        <a href={exportUrl}
+          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-colors">
           엑셀 다운로드
         </a>
       </div>
 
       {/* 필터 */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-3">
+          {/* 연도 필터 (NEW) */}
+          <div>
+            <label className="text-xs text-gray-500 mb-1 block">연도</label>
+            <select
+              value={year}
+              onChange={(e) => { setYear(e.target.value); setPage(1); }}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
+            >
+              <option value="">전체</option>
+              {availableYears.map((y) => (
+                <option key={y} value={y}>{y}년</option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="text-xs text-gray-500 mb-1 block">업무구분</label>
             <select
@@ -124,9 +129,7 @@ export default function ProjectsPage() {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
             >
               <option value="">전체</option>
-              {WORK_TYPES.map((wt) => (
-                <option key={wt} value={wt}>{wt}</option>
-              ))}
+              {WORK_TYPES.map((wt) => <option key={wt} value={wt}>{wt}</option>)}
             </select>
           </div>
 
@@ -149,17 +152,13 @@ export default function ProjectsPage() {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
             >
               <option value="">전체</option>
-              {MONTHS.map((m) => (
-                <option key={m} value={String(m)}>{m}월</option>
-              ))}
+              {MONTHS.map((m) => <option key={m} value={String(m)}>{m}월</option>)}
             </select>
           </div>
 
           <div>
             <label className="text-xs text-gray-500 mb-1 block">최소 금액 (원)</label>
-            <input
-              type="number"
-              value={minPrice}
+            <input type="number" value={minPrice}
               onChange={(e) => setMinPrice(e.target.value)}
               placeholder="100000000"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -168,9 +167,7 @@ export default function ProjectsPage() {
 
           <div>
             <label className="text-xs text-gray-500 mb-1 block">최대 금액 (원)</label>
-            <input
-              type="number"
-              value={maxPrice}
+            <input type="number" value={maxPrice}
               onChange={(e) => setMaxPrice(e.target.value)}
               placeholder="1000000000"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -179,16 +176,12 @@ export default function ProjectsPage() {
         </div>
 
         <div className="flex gap-2">
-          <button
-            onClick={handleFilter}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors"
-          >
+          <button onClick={fetchData}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors">
             검색
           </button>
-          <button
-            onClick={handleReset}
-            className="px-4 py-2 border border-gray-200 hover:bg-gray-50 text-gray-600 text-sm rounded-lg transition-colors"
-          >
+          <button onClick={handleReset}
+            className="px-4 py-2 border border-gray-200 hover:bg-gray-50 text-gray-600 text-sm rounded-lg transition-colors">
             초기화
           </button>
         </div>
@@ -198,32 +191,19 @@ export default function ProjectsPage() {
       {loading ? (
         <div className="h-64 bg-gray-100 rounded-xl animate-pulse" />
       ) : (
-        <ProjectTable
-          data={data}
-          sortBy={sortBy}
-          sortOrder={sortOrder}
-          onSort={handleSort}
-        />
+        <ProjectTable data={data} sortBy={sortBy} sortOrder={sortOrder} onSort={handleSort} />
       )}
 
       {/* 페이지네이션 */}
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-2">
-          <button
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm disabled:opacity-40 hover:bg-gray-50"
-          >
+          <button disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm disabled:opacity-40 hover:bg-gray-50">
             이전
           </button>
-          <span className="text-sm text-gray-500">
-            {page} / {totalPages}
-          </span>
-          <button
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm disabled:opacity-40 hover:bg-gray-50"
-          >
+          <span className="text-sm text-gray-500">{page} / {totalPages}</span>
+          <button disabled={page >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm disabled:opacity-40 hover:bg-gray-50">
             다음
           </button>
         </div>

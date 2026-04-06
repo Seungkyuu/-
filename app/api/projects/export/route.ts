@@ -10,9 +10,16 @@ export async function GET(req: NextRequest) {
     const workType = searchParams.get('workType') || '';
     const agency = searchParams.get('agency') || '';
     const month = searchParams.get('month') || '';
+    const year = searchParams.get('year') || '';
 
-    const conditions: string[] = ["announced_at BETWEEN '2025-01-01' AND '2025-12-31'"];
+    const conditions: string[] = [];
     const params: (string | number)[] = [];
+
+    if (year) {
+      conditions.push(`announced_at LIKE '${parseInt(year)}%'`);
+    } else {
+      conditions.push("announced_at BETWEEN '2023-01-01' AND '2025-12-31'");
+    }
 
     if (workType) { conditions.push('work_type = ?'); params.push(workType); }
     if (agency) { conditions.push('agency LIKE ?'); params.push(`%${agency}%`); }
