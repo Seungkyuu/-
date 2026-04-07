@@ -1,88 +1,140 @@
 /**
  * 공공데이터포털 나라장터 API 수집기
- * API 키가 없는 경우 시드 데이터만 사용합니다.
  *
- * 참고 API:
- * - 입찰공고: https://apis.data.go.kr/1230000/BidPublicInfoService04/getBidPblancListInfoServc04
- * - 사전규격공고: https://apis.data.go.kr/1230000/BidPublicInfoService04/getPreSpcPublicListInfoServc
+ * API 엔드포인트:
+ * - 입찰공고: https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc
+ * - 사전규격공고: https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getPreSpcPublicListInfoServc
  */
 
 import { getDb, WORK_TYPES } from './db';
 
-const BASE_URL = 'https://apis.data.go.kr/1230000/BidPublicInfoService04';
+const BASE_URL = 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService';
 const API_KEY = process.env.PUBLIC_DATA_API_KEY;
 
-// 업무구분 코드 매핑 (나라장터 API 기준)
-const WORK_TYPE_CODES: Record<string, string> = {
-  '일반용역': '4',  // 용역
-  '기술용역': '4',  // 용역 (기술)
-  '기타': '5',
-  '민간': '5',
+// 나라장터 업무구분 → 내부 코드 매핑
+// bsnsDivNm 필드값 기준
+const BSNS_DIV_MAP: Record<string, string> = {
+  '용역': '일반용역',
+  '일반용역': '일반용역',
+  '기술용역': '기술용역',
+  '민간': '민간',
+  '기타': '기타',
 };
 
 interface G2BItem {
-  bidNtceNo?: string;
-  bidNtceNm?: string;
-  ntceInsttNm?: string;
-  dminsttNm?: string;
-  bidNtceDt?: string;
-  bidClseDt?: string;
-  presmptPrce?: string;
-  drwtPrce?: string;
-  sucsfbidCorpNm?: string;
-  ntceSpecFileUrl?: string;
-  bidClseYmd?: string;
-  cntrctCnclsYmd?: string;
-  wghtdAvgPrce?: string;
+  bidNtceNo?: string;           // 입찰공고번호
+  bidNtceOrd?: string;          // 입찰공고차수
+  bidNtceNm?: string;           // 입찰공고명
+  ntceInsttNm?: string;         // 공고기관명
+  dminsttNm?: string;           // 수요기관명
+  bsnsDivNm?: string;           // 업무구분명
+  bidNtceDt?: string;           // 입찰공고일시
+  bidClseDt?: string;           // 입찰마감일시
+  opengDt?: string;             // 개찰일시
+  presmptPrce?: string;         // 추정가격
+  drwtPrce?: string;            // 낙찰금액
+  sucsfbidCorpNm?: string;      // 낙찰업체명
+  ntceSpecFileUrl1?: string;    // 공고문서URL
+  bidClseYmd?: string;          // 입찰마감일자
+  cntrctCnclsYmd?: string;      // 계약체결일자
+  wghtdAvgPrce?: string;        // 가중평균가격
+  // 사전규격 전용
+  presnatnOprtnDt?: string;     // 사전규격등록일시
+  presnatnClseDt?: string;      // 의견등록마감일시
+  dtilBdgtAmt?: string;         // 배정예산액
 }
 
+/** 응답에서 items 배열 추출 (단일 item도 배열로 반환) */
+function extractItems(body: unknown): G2BItem[] {
+  if (!body || typeof body !== 'object') return [];
+  const b = body as Record<string, unknown>;
+  const rawItems = (b.items as Record<string, unknown>)?.item;
+  if (!rawItems) return [];
+  return Array.isArray(rawItems) ? rawItems as G2BItem[] : [rawItems as G2BItem];
+}
+
+/** 제목으로 업무구분 추론 (API 필드가 없을 때 fallback) */
+function detectWorkType(title: string): string {
+  const t = title;
+  if (t.includes('기술') || t.includes('컨설팅') || t.includes('연구') || t.includes('개발')) return '기술용역';
+  if (t.includes('용역')) return '일반용역';
+  if (t.includes('민간') || t.includes('위탁')) return '민간';
+  return '기타';
+}
+
+/** bsnsDivNm → 내부 workType */
+function mapWorkType(item: G2BItem): string {
+  if (item.bsnsDivNm) {
+    const mapped = BSNS_DIV_MAP[item.bsnsDivNm.trim()];
+    if (mapped) return mapped;
+  }
+  return detectWorkType(item.bidNtceNm || '');
+}
+
+/** 입찰공고 목록 조회 */
 async function fetchBidList(
   startDate: string,
   endDate: string,
   pageNo: number = 1
 ): Promise<{ items: G2BItem[]; totalCount: number }> {
-  if (!API_KEY) {
-    return { items: [], totalCount: 0 };
-  }
+  if (!API_KEY) return { items: [], totalCount: 0 };
 
   const params = new URLSearchParams({
     serviceKey: API_KEY,
     numOfRows: '100',
     pageNo: String(pageNo),
     type: 'json',
-    inqryDiv: '1',
+    inqryDiv: '1',        // 1=공고일 기준
     inqryBgnDt: startDate.replace(/-/g, '') + '0000',
     inqryEndDt: endDate.replace(/-/g, '') + '2359',
   });
 
-  const url = `${BASE_URL}/getBidPblancListInfoServc04?${params}`;
-  const res = await fetch(url, { next: { revalidate: 3600 } });
+  const url = `${BASE_URL}/getBidPblancListInfoServc?${params}`;
 
-  if (!res.ok) throw new Error(`API 요청 실패: ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: 'no-store' });
+  } catch (err) {
+    console.error('[collector] fetch error:', err);
+    return { items: [], totalCount: 0 };
+  }
 
-  const data = await res.json();
-  const response = data?.response;
-  const body = response?.body;
+  if (!res.ok) {
+    console.error(`[collector] API HTTP 오류: ${res.status} ${res.statusText}`);
+    return { items: [], totalCount: 0 };
+  }
 
-  if (!body) return { items: [], totalCount: 0 };
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    const text = await res.text().catch(() => '');
+    console.error('[collector] JSON 파싱 오류, 응답:', text.slice(0, 500));
+    return { items: [], totalCount: 0 };
+  }
 
-  const items = Array.isArray(body.items?.item)
-    ? body.items.item
-    : body.items?.item
-    ? [body.items.item]
-    : [];
+  const body = (data as Record<string, unknown>)?.response as Record<string, unknown> | undefined;
+  const bodyContent = body?.body as Record<string, unknown> | undefined;
+  if (!bodyContent) {
+    // resultCode 확인
+    const resultMsg = (body as Record<string, unknown>)?.header as Record<string, unknown> | undefined;
+    console.error('[collector] 응답 body 없음:', JSON.stringify(resultMsg));
+    return { items: [], totalCount: 0 };
+  }
 
-  return { items, totalCount: body.totalCount || 0 };
+  const items = extractItems(bodyContent);
+  const totalCount = Number(bodyContent.totalCount) || 0;
+  console.log(`[collector] 입찰공고 페이지 ${pageNo}: ${items.length}건 / 전체 ${totalCount}건`);
+  return { items, totalCount };
 }
 
+/** 사전규격공고 목록 조회 */
 async function fetchPreSpecList(
   startDate: string,
   endDate: string,
   pageNo: number = 1
 ): Promise<{ items: G2BItem[]; totalCount: number }> {
-  if (!API_KEY) {
-    return { items: [], totalCount: 0 };
-  }
+  if (!API_KEY) return { items: [], totalCount: 0 };
 
   const params = new URLSearchParams({
     serviceKey: API_KEY,
@@ -94,31 +146,38 @@ async function fetchPreSpecList(
   });
 
   const url = `${BASE_URL}/getPreSpcPublicListInfoServc?${params}`;
-  const res = await fetch(url, { next: { revalidate: 3600 } });
 
-  if (!res.ok) throw new Error(`사전규격 API 요청 실패: ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(url, { cache: 'no-store' });
+  } catch (err) {
+    console.error('[collector] 사전규격 fetch error:', err);
+    return { items: [], totalCount: 0 };
+  }
 
-  const data = await res.json();
-  const body = data?.response?.body;
-  if (!body) return { items: [], totalCount: 0 };
+  if (!res.ok) {
+    console.error(`[collector] 사전규격 API 오류: ${res.status}`);
+    return { items: [], totalCount: 0 };
+  }
 
-  const items = Array.isArray(body.items?.item)
-    ? body.items.item
-    : body.items?.item
-    ? [body.items.item]
-    : [];
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    return { items: [], totalCount: 0 };
+  }
 
-  return { items, totalCount: body.totalCount || 0 };
+  const body = (data as Record<string, unknown>)?.response as Record<string, unknown> | undefined;
+  const bodyContent = body?.body as Record<string, unknown> | undefined;
+  if (!bodyContent) return { items: [], totalCount: 0 };
+
+  const items = extractItems(bodyContent);
+  const totalCount = Number(bodyContent.totalCount) || 0;
+  console.log(`[collector] 사전규격 페이지 ${pageNo}: ${items.length}건 / 전체 ${totalCount}건`);
+  return { items, totalCount };
 }
 
-function detectWorkType(title: string): string {
-  const t = title.toLowerCase();
-  if (t.includes('기술') || t.includes('컨설팅') || t.includes('연구')) return '기술용역';
-  if (t.includes('용역')) return '일반용역';
-  if (t.includes('민간') || t.includes('위탁')) return '민간';
-  return '기타';
-}
-
+/** 입찰공고 수집 및 저장 */
 export async function collectBids(year: number = 2025): Promise<number> {
   const db = getDb();
   const startDate = `${year}-01-01`;
@@ -141,22 +200,35 @@ export async function collectBids(year: number = 2025): Promise<number> {
 
     const insertMany = db.transaction((rows: G2BItem[]) => {
       for (const item of rows) {
-        const workType = detectWorkType(item.bidNtceNm || '');
+        const workType = mapWorkType(item);
         if (!WORK_TYPES.includes(workType as typeof WORK_TYPES[number])) continue;
 
+        // 공고번호 + 차수로 ID 생성
+        const id = item.bidNtceOrd
+          ? `${item.bidNtceNo}-${item.bidNtceOrd}`
+          : item.bidNtceNo || '';
+
+        // 날짜: YYYYMMDDHHII → YYYY-MM-DD
+        const announcedAt = item.bidNtceDt
+          ? item.bidNtceDt.slice(0, 4) + '-' + item.bidNtceDt.slice(4, 6) + '-' + item.bidNtceDt.slice(6, 8)
+          : null;
+
+        const deadlineAt = item.bidClseYmd || null;
+        const contractAt = item.cntrctCnclsYmd || null;
+
         insertBid.run(
-          item.bidNtceNo,
+          id,
           item.bidNtceNm,
           item.ntceInsttNm,
           item.dminsttNm,
           workType,
-          item.bidNtceDt?.slice(0, 10),
-          item.bidClseYmd,
-          item.cntrctCnclsYmd,
+          announcedAt,
+          deadlineAt,
+          contractAt,
           item.presmptPrce ? parseInt(item.presmptPrce) : null,
           item.drwtPrce ? parseInt(item.drwtPrce) : null,
-          item.sucsfbidCorpNm,
-          item.ntceSpecFileUrl,
+          item.sucsfbidCorpNm || null,
+          item.ntceSpecFileUrl1 || null,
         );
         totalSaved++;
       }
@@ -167,13 +239,14 @@ export async function collectBids(year: number = 2025): Promise<number> {
     hasMore = pageNo * 100 < totalCount;
     pageNo++;
 
-    // API 부하 방지
-    await new Promise((r) => setTimeout(r, 200));
+    // API 부하 방지 (200ms 간격)
+    if (hasMore) await new Promise((r) => setTimeout(r, 200));
   }
 
   return totalSaved;
 }
 
+/** 사전규격공고 수집 및 저장 */
 export async function collectPreSpecs(year: number = 2025): Promise<number> {
   const db = getDb();
   const startDate = `${year}-01-01`;
@@ -195,18 +268,35 @@ export async function collectPreSpecs(year: number = 2025): Promise<number> {
 
     const insertMany = db.transaction((rows: G2BItem[]) => {
       for (const item of rows) {
-        const workType = detectWorkType(item.bidNtceNm || '');
+        const workType = mapWorkType(item);
         if (!WORK_TYPES.includes(workType as typeof WORK_TYPES[number])) continue;
 
+        const id = item.bidNtceOrd
+          ? `${item.bidNtceNo}-${item.bidNtceOrd}`
+          : item.bidNtceNo || '';
+
+        // 사전규격은 presnatnOprtnDt 사용
+        const publishedAt = item.presnatnOprtnDt
+          ? item.presnatnOprtnDt.slice(0, 4) + '-' + item.presnatnOprtnDt.slice(4, 6) + '-' + item.presnatnOprtnDt.slice(6, 8)
+          : item.bidNtceDt
+          ? item.bidNtceDt.slice(0, 4) + '-' + item.bidNtceDt.slice(4, 6) + '-' + item.bidNtceDt.slice(6, 8)
+          : null;
+
+        const budget = item.dtilBdgtAmt
+          ? parseInt(item.dtilBdgtAmt)
+          : item.presmptPrce
+          ? parseInt(item.presmptPrce)
+          : null;
+
         insertPreSpec.run(
-          item.bidNtceNo,
+          id,
           item.bidNtceNm,
           item.ntceInsttNm,
           item.dminsttNm,
           workType,
-          item.bidNtceDt?.slice(0, 10),
-          item.presmptPrce ? parseInt(item.presmptPrce) : null,
-          item.ntceSpecFileUrl,
+          publishedAt,
+          budget,
+          item.ntceSpecFileUrl1 || null,
         );
         totalSaved++;
       }
@@ -217,7 +307,7 @@ export async function collectPreSpecs(year: number = 2025): Promise<number> {
     hasMore = pageNo * 100 < totalCount;
     pageNo++;
 
-    await new Promise((r) => setTimeout(r, 200));
+    if (hasMore) await new Promise((r) => setTimeout(r, 200));
   }
 
   return totalSaved;
