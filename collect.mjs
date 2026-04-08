@@ -68,6 +68,16 @@ async function fetchMonth(bgnDt, endDt, label) {
   while (true) {
     const { items, total } = await fetchPage(bgnDt, endDt, page);
     if (!items.length) break;
+
+    // 첫 페이지 첫 번째 아이템의 bsnsDivNm 값 확인 (디버그)
+    if (page === 1 && label === '1월' && items.length > 0) {
+      const sample = items.slice(0, 3).map(i => ({ nm: i.bidNtceNm?.slice(0,20), div: i.bsnsDivNm }));
+      console.log('\n  [샘플]', JSON.stringify(sample));
+      // bsnsDivNm 고유값 출력
+      const divSet = [...new Set(items.map(i => i.bsnsDivNm || '(없음)'))];
+      console.log('  [업무구분값]', divSet.join(', '));
+    }
+
     for (const it of items) {
       if (!isService(it)) continue;
       monthRows.push({
