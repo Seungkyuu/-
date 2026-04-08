@@ -80,7 +80,7 @@ async function fetchPage(bgnDt, endDt, pageNo) {
     inqryDiv: '1',
     inqryBgnDt: bgnDt,
     inqryEndDt: endDt,
-    bsnsDivNm: '용역',
+    bsnsDivNm: '용역',   // 서버측 1차 필터: 용역 계열만 요청
   });
 
   const res = await fetch(`${BASE}?${p}`);
@@ -100,6 +100,13 @@ async function fetchPage(bgnDt, endDt, pageNo) {
   } else if (raw?.item) {
     items = Array.isArray(raw.item) ? raw.item : [raw.item];
   }
+
+  // 클라이언트측 2차 필터: 응답에 bsnsDivNm 있으면 일반용역/용역만 통과
+  // (서버 필터가 무시되더라도 여기서 한 번 더 걸러냄)
+  items = items.filter(it => {
+    const div = (it.bsnsDivNm || '').trim();
+    return div === '' || div.includes('용역');
+  });
 
   return { items, total: Number(body?.totalCount) || 0 };
 }
