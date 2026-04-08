@@ -11,6 +11,22 @@ const XLSX = require('xlsx');
 const API_KEY = 'MA2vFmc4GRZYQDZtoUe6XyW80tkLDS7bhG4xxKovfuUvTgYML+RgFBvQLD6l/O21jp+YB5Sp+GrEBBZVZec3Cw==';
 const BASE = 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc';
 
+// G2B API는 한 번에 최대 1개월 조회 가능 → 월별로 분할
+const MONTHS = [
+  ['202501010000','202501312359'],
+  ['202502010000','202502282359'],
+  ['202503010000','202503312359'],
+  ['202504010000','202504302359'],
+  ['202505010000','202505312359'],
+  ['202506010000','202506302359'],
+  ['202507010000','202507312359'],
+  ['202508010000','202508312359'],
+  ['202509010000','202509302359'],
+  ['202510010000','202510312359'],
+  ['202511010000','202511302359'],
+  ['202512010000','202512312359'],
+];
+
 function isService(item) {
   const div = (item.bsnsDivNm || '').trim();
   const nm  = item.bidNtceNm || '';
@@ -27,11 +43,11 @@ function fmt(raw) {
   return s.length >= 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : raw;
 }
 
-async function fetchPage(pageNo) {
+async function fetchPage(bgnDt, endDt, pageNo) {
   const p = new URLSearchParams({
     serviceKey: API_KEY, numOfRows: '100', pageNo: String(pageNo),
     type: 'json', inqryDiv: '1',
-    inqryBgnDt: '202501010000', inqryEndDt: '202512312359',
+    inqryBgnDt: bgnDt, inqryEndDt: endDt,
   });
   const res = await fetch(`${BASE}?${p}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -39,25 +55,22 @@ async function fetchPage(pageNo) {
   const body = json?.response?.body;
   if (!body) {
     const hdr = json?.response?.header;
-    throw new Error(`API 오류: ${hdr?.resultMsg || JSON.stringify(json).slice(0,200)}`);
+    throw new Error(`API 오류: ${JSON.stringify(hdr)}`);
   }
   const raw = body?.items?.item;
   const items = !raw ? [] : Array.isArray(raw) ? raw : [raw];
   return { items, total: Number(body.totalCount) || 0 };
 }
 
-async function main() {
-  console.log('2025년 일반용역 입찰공고 수집 중...');
-  const rows = [];
+async function fetchMonth(bgnDt, endDt, label) {
+  const monthRows = [];
   let page = 1;
-
   while (true) {
-    const { items, total } = await fetchPage(page);
+    const { items, total } = await fetchPage(bgnDt, endDt, page);
     if (!items.length) break;
-
     for (const it of items) {
       if (!isService(it)) continue;
-      rows.push({
+      monthRows.push({
         '입찰공고번호': `${it.bidNtceNo || ''}-${it.bidNtceOrd || '1'}`,
         '공고명':       it.bidNtceNm || '',
         '공고기관':     it.ntceInsttNm || '',
@@ -74,10 +87,24 @@ async function main() {
         '공고URL':      it.ntceSpecFileUrl1 || '',
       });
     }
-
-    process.stdout.write(`\r  ${rows.length}건 수집 / 전체 ${total}건 (페이지 ${page})`);
     if (page * 100 >= total) break;
     page++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+  return monthRows;
+}
+
+async function main() {
+  console.log('2025년 일반용역 입찰공고 수집 중... (월별 12회 조회)');
+  const rows = [];
+
+  for (let i = 0; i < MONTHS.length; i++) {
+    const [bgn, end] = MONTHS[i];
+    const label = `${i+1}월`;
+    process.stdout.write(`  ${label} 수집 중...`);
+    const monthRows = await fetchMonth(bgn, end, label);
+    rows.push(...monthRows);
+    console.log(` ${monthRows.length}건 (누적 ${rows.length}건)`);
     await new Promise(r => setTimeout(r, 300));
   }
 
