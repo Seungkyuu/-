@@ -110,6 +110,16 @@ async function fetchMonth(bgnDt, endDt, label) {
 
   while (true) {
     const { items, total } = await fetchPage(bgnDt, endDt, page);
+
+    // 1월 첫 페이지 디버그
+    if (label === '1월' && page === 1) {
+      console.log(`\n  [DEBUG] 1월 API 응답: items=${items.length}건, totalCount=${total}`);
+      if (items.length > 0) {
+        console.log('  [DEBUG] 첫 3개 공고명:');
+        items.slice(0, 3).forEach(it => console.log(`    - "${it.bidNtceNm}"`));
+      }
+    }
+
     if (!items.length) break;
 
     totalFetched += items.length;
