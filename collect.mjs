@@ -43,6 +43,8 @@ function fmt(raw) {
   return s.length >= 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : raw;
 }
 
+let _debugDone = false;
+
 async function fetchPage(bgnDt, endDt, pageNo) {
   const p = new URLSearchParams({
     serviceKey: API_KEY, numOfRows: '100', pageNo: String(pageNo),
@@ -52,6 +54,15 @@ async function fetchPage(bgnDt, endDt, pageNo) {
   const res = await fetch(`${BASE}?${p}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
+
+  // 최초 1회 원시 응답 구조 출력
+  if (!_debugDone) {
+    _debugDone = true;
+    console.log('\n[DEBUG 원시응답 구조]');
+    console.log(JSON.stringify(json, null, 2).slice(0, 2000));
+    console.log('[DEBUG 끝]\n');
+  }
+
   const body = json?.response?.body;
   if (!body) {
     const hdr = json?.response?.header;
