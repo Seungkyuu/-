@@ -1,5 +1,5 @@
 /**
- * 나라장터 2025년 일반용역 입찰공고 수집 → 엑셀 저장
+ * 나라장터 2025년 교육 관련 입찰공고 수집 → 엑셀 저장
  * 실행: node collect.mjs
  */
 
@@ -10,6 +10,36 @@ const XLSX = require('xlsx');
 
 const API_KEY = 'MA2vFmc4GRZYQDZtoUe6XyW80tkLDS7bhG4xxKovfuUvTgYML+RgFBvQLD6l/O21jp+YB5Sp+GrEBBZVZec3Cw==';
 const BASE = 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc';
+
+// ── 교육회사 대상 키워드 20개 ──────────────────────────────────────────────────
+const EDU_KEYWORDS = [
+  '이러닝',
+  'e-러닝',
+  '사이버연수',
+  '사이버교육',
+  '북러닝',
+  '독서통신',
+  '원격교육',
+  '원격훈련',
+  '역량강화교육',
+  '역량강화 교육',
+  '직무교육',
+  '직무연수',
+  '직원교육',
+  '직원연수',
+  '교육훈련',
+  '리더십교육',
+  '법정의무교육',
+  '온라인교육',
+  '교육콘텐츠',
+  'HRD',
+];
+
+// 사업명에 키워드 포함 여부 확인
+function matchesKeyword(title) {
+  const t = (title || '').toLowerCase();
+  return EDU_KEYWORDS.some(kw => t.includes(kw.toLowerCase()));
+}
 
 // G2B API 최대 1개월 범위 제한 → 월별 분할
 const MONTHS = [
@@ -27,14 +57,18 @@ const MONTHS = [
   ['202512010000','202512312359','12월'],
 ];
 
-// 날짜 문자열 → YYYY-MM-DD (이미 포맷된 경우도 처리)
+// 날짜 문자열 → YYYY-MM-DD
 function fmt(raw) {
   if (!raw) return '';
-  // "2025-01-05 13:34:05" → "2025-01-05"
   if (typeof raw === 'string' && raw.includes('-')) return raw.slice(0, 10);
-  // "20250105..." → "2025-01-05"
   const s = String(raw).replace(/\D/g, '');
   return s.length >= 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : raw;
+}
+
+// 일치한 키워드 반환 (어떤 키워드로 매칭됐는지 엑셀에 표시)
+function matchedKeyword(title) {
+  const t = (title || '').toLowerCase();
+  return EDU_KEYWORDS.filter(kw => t.includes(kw.toLowerCase())).join(', ');
 }
 
 async function fetchPage(bgnDt, endDt, pageNo) {
@@ -43,10 +77,10 @@ async function fetchPage(bgnDt, endDt, pageNo) {
     numOfRows: '100',
     pageNo: String(pageNo),
     type: 'json',
-    inqryDiv: '1',       // 공고일 기준
+    inqryDiv: '1',
     inqryBgnDt: bgnDt,
     inqryEndDt: endDt,
-    bsnsDivNm: '용역',   // ← 서버측 업무구분 필터
+    bsnsDivNm: '용역',
   });
 
   const res = await fetch(`${BASE}?${p}`);
@@ -59,7 +93,6 @@ async function fetchPage(bgnDt, endDt, pageNo) {
   }
 
   const body = json?.response?.body;
-  // body.items 가 직접 배열인 경우와 {item:[]} 구조 모두 처리
   const raw = body?.items;
   let items = [];
   if (Array.isArray(raw)) {
@@ -74,13 +107,18 @@ async function fetchPage(bgnDt, endDt, pageNo) {
 async function fetchMonth(bgnDt, endDt, label) {
   const rows = [];
   let page = 1;
+  let totalFetched = 0;
 
   while (true) {
     const { items, total } = await fetchPage(bgnDt, endDt, page);
     if (!items.length) break;
 
+    totalFetched += items.length;
+
     for (const it of items) {
+      if (!matchesKeyword(it.bidNtceNm)) continue;  // 키워드 필터
       rows.push({
+        '매칭키워드':   matchedKeyword(it.bidNtceNm),
         '입찰공고번호': `${it.bidNtceNo || ''}-${it.bidNtceOrd || '000'}`,
         '공고명':       it.bidNtceNm || '',
         '공고기관':     it.ntceInsttNm || '',
@@ -103,8 +141,8 @@ async function fetchMonth(bgnDt, endDt, label) {
       });
     }
 
-    process.stdout.write(`\r  ${label}: ${rows.length}건 / 전체 ${total}건`);
-    if (page * 100 >= total) break;
+    process.stdout.write(`\r  ${label}: ${totalFetched}/${total}건 조회 → 매칭 ${rows.length}건`);
+    if (totalFetched >= total) break;
     page++;
     await new Promise(r => setTimeout(r, 300));
   }
@@ -112,7 +150,8 @@ async function fetchMonth(bgnDt, endDt, label) {
 }
 
 async function main() {
-  console.log('2025년 일반용역(용역) 입찰공고 수집 중...\n');
+  console.log('2025년 교육 관련 입찰공고 수집 중...');
+  console.log(`키워드 ${EDU_KEYWORDS.length}개: ${EDU_KEYWORDS.join(', ')}\n`);
   const allRows = [];
 
   for (const [bgn, end, label] of MONTHS) {
@@ -120,31 +159,36 @@ async function main() {
     try {
       const rows = await fetchMonth(bgn, end, label);
       allRows.push(...rows);
-      console.log(`\r  ${label}: ${rows.length}건 완료 (누적 ${allRows.length}건)`);
+      console.log(`\r  ${label} 완료: 매칭 ${rows.length}건 (누적 ${allRows.length}건)           `);
     } catch (e) {
-      console.log(`\r  ${label}: 오류 - ${e.message}`);
+      console.log(`\r  ${label} 오류: ${e.message}`);
     }
     await new Promise(r => setTimeout(r, 300));
   }
 
   if (!allRows.length) {
-    console.log('\n데이터가 없습니다. API 키 또는 파라미터를 확인하세요.');
+    console.log('\n매칭된 데이터가 없습니다.');
     return;
   }
 
   console.log('\n저장 중...');
   const ws = XLSX.utils.json_to_sheet(allRows);
   ws['!cols'] = [
-    {wch:22},{wch:55},{wch:22},{wch:22},{wch:10},{wch:12},
-    {wch:12},{wch:12},{wch:12},{wch:12},
+    {wch:20},{wch:22},{wch:55},{wch:22},{wch:22},
+    {wch:10},{wch:12},{wch:12},{wch:12},{wch:12},{wch:12},
     {wch:15},{wch:15},{wch:10},{wch:25},{wch:12},{wch:16},{wch:50}
   ];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '일반용역_2025');
+  XLSX.utils.book_append_sheet(wb, ws, '교육관련_2025');
   mkdirSync('output', { recursive: true });
-  const file = 'output/일반용역_2025.xlsx';
+  const file = 'output/교육관련_입찰공고_2025.xlsx';
   XLSX.writeFile(wb, file);
   console.log(`\n✅ 완료: ${file}  (총 ${allRows.length}건)`);
+  console.log('\n키워드별 건수:');
+  for (const kw of EDU_KEYWORDS) {
+    const cnt = allRows.filter(r => r['매칭키워드'].includes(kw)).length;
+    if (cnt > 0) console.log(`  ${kw}: ${cnt}건`);
+  }
 }
 
 main().catch(e => { console.error('\n오류:', e.message); process.exit(1); });
